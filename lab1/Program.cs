@@ -1,16 +1,16 @@
-﻿using OpenTK.Windowing.Desktop;
+using OpenTK.Windowing.Desktop;
 
 namespace lab1 {
     public static class Program {
-        static void Main() {
-            var gameWindowSettings = GameWindowSettings.Default;
+        static void Main(string[] args) {
+            // Настройка параметров окна
             var nativeWindowSettings = new NativeWindowSettings() {
                 ClientSize = new OpenTK.Mathematics.Vector2i(800, 600),
-                Title = "Polyline"
+                Title = "Lab-1: Отрисовка и трансформация линии"
             };
-            
-            using var window = new Window(gameWindowSettings, nativeWindowSettings);
-            window.Run();
+            using (var window = new Window(GameWindowSettings.Default, nativeWindowSettings)) {
+                window.Run();
+            }
         }
     }
 }

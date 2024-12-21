@@ -1,42 +1,29 @@
-using System;
 using OpenTK.Graphics.OpenGL;
-using System.Numerics;
+using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using OpenTK.Windowing.GraphicsLibraryFramework;
-using OpenTK.Mathematics;
+using System;
 
 namespace lab1 {
-    public class Window(GameWindowSettings gameWindowSettings, NativeWindowSettings nativeWindowSettings)
-        : GameWindow(gameWindowSettings, nativeWindowSettings) {
-        Polyline polyline = new Polyline();
+    public class Window : GameWindow {
+        private Line _line;
 
-        Button _deleteButton = new DeleteButton(0.4f, 0.15f, -0.9f, 0.9f);
-        Button _addButton = new AddButton(0.4f, 0.15f, -0.9f, 0.7f);
-
-        ButtonBorder _deleteButtonBorder = new ButtonBorder(0.4f, 0.15f, -0.9f, 0.9f);
-        ButtonBorder _addButtonBorder = new ButtonBorder(0.4f, 0.15f, -0.9f, 0.7f);
+        public Window(GameWindowSettings gameWindowSettings, NativeWindowSettings nativeWindowSettings)
+            : base(gameWindowSettings, nativeWindowSettings) {
+            // Начальная линия
+            _line = new Line(new Vector2(-0.5f, -0.5f), new Vector2(0.5f, 0.5f));
+        }
 
         protected override void OnLoad() {
             base.OnLoad();
-            GL.ClearColor(Color4.Black);
+            GL.ClearColor(0.1f, 0.1f, 0.2f, 1.0f);
 
-            polyline.Load();
-            _deleteButton.Load();
-            _deleteButtonBorder.Load();
-            _addButton.Load();
-            _addButtonBorder.Load();
-
-            Console.WriteLine("Window loaded and OpenGL context initialized.");
+            _line.Load();
         }
 
         protected override void OnUnload() {
-            polyline.Unload();
-            _deleteButton.Unload();
-            _deleteButtonBorder.Unload();
-            _addButton.Unload();
-            _addButtonBorder.Unload();
-
+            _line.Unload();
             base.OnUnload();
         }
 
@@ -44,74 +31,35 @@ namespace lab1 {
             base.OnRenderFrame(e);
             GL.Clear(ClearBufferMask.ColorBufferBit);
 
-            polyline.Draw();
-            _deleteButton.Draw();
-            _deleteButtonBorder.Draw();
-            _addButton.Draw();
-            _addButtonBorder.Draw();
+            _line.Draw();
 
             SwapBuffers();
         }
 
         protected override void OnUpdateFrame(FrameEventArgs e) {
             base.OnUpdateFrame(e);
+
             var input = KeyboardState;
 
-            polyline.Animate(e.Time);
+            // Управление линией
+            if (input.IsKeyDown(Keys.W)) _line.Move(new Vector2(0, 0.0001f)); // Вверх
+            if (input.IsKeyDown(Keys.S)) _line.Move(new Vector2(0, -0.0001f)); // Вниз
+            if (input.IsKeyDown(Keys.A)) _line.Move(new Vector2(-0.0001f, 0)); // Влево
+            if (input.IsKeyDown(Keys.D)) _line.Move(new Vector2(0.0001f, 0)); // Вправо
 
-            if (input.IsKeyDown(Keys.Escape))
-                Close();
-            else if (input.IsKeyDown(Keys.Delete))
-                polyline.DeletePoint();
-            else if (input.IsKeyDown(Keys.Space) && !input.WasKeyDown(Keys.Space))
-                polyline.TurnAnimation();
-            else if (input.IsKeyDown(Keys.Up))
-                polyline.IncreaseSpeed();
-            else if (input.IsKeyDown(Keys.Down))
-                polyline.ReduceSpeed();
-                
-            HandleMouseInput();
+            // Масштабирование
+            if (input.IsKeyDown(Keys.Z)) _line.Scale(1.0001f);
+            if (input.IsKeyDown(Keys.X)) _line.Scale(0.9999f);
+
+            // Поворот
+            if (input.IsKeyDown(Keys.Q)) _line.Rotate(0.1f);
+            if (input.IsKeyDown(Keys.E)) _line.Rotate(-0.1f);
+
+            if (input.IsKeyDown(Keys.Escape)) Close();
         }
 
-        protected override void OnResize(ResizeEventArgs e) {
-            base.OnResize(e);
-            GL.Viewport(0, 0, Size.X, Size.Y);
-        }
-
-
-        private void HandleMouseInput() {
-            var mouseState = MouseState;
-
-            System.Numerics.Vector2 mousePos = new System.Numerics.Vector2(
-                (mouseState.X / (float)Size.X) * 2f - 1f,
-                -((mouseState.Y / (float)Size.Y) * 2f - 1f)
-            );
-
-            if (mouseState.IsButtonDown(MouseButton.Left) && !mouseState.WasButtonDown(MouseButton.Left)) {
-                if (_deleteButton.IsOnButton(mousePos)) {
-                    polyline.DeleteLastPoint();
-                    _deleteButton.ClickEvent();
-                }
-                else if (_addButton.IsOnButton(mousePos)) {
-                    if (!polyline._isInAddPointMode) polyline.EnterAddPointMode();
-                    else polyline.ExitAddPointMode();
-                    _addButton.ClickEvent();
-                } 
-                else if (polyline._isInAddPointMode) 
-                    polyline.AddPoint(mousePos);
-            } 
-            else if (mouseState.IsButtonDown(MouseButton.Left))
-                polyline.SelectPoint(mousePos);
-            else if (mouseState.IsButtonDown(MouseButton.Right) && !mouseState.WasButtonDown(MouseButton.Right)) {
-                polyline.DeselectPoint();
-                polyline.AddPoint(mousePos);
-            }
-            else if (!mouseState.IsButtonDown(MouseButton.Left) && mouseState.WasButtonDown(MouseButton.Left)) {
-                if (_deleteButton.IsOnButton(mousePos))
-                    _deleteButton.ClickEvent();
-            }
-            else 
-                polyline.DeselectPoint();
+        public void UpdateLine(Vector2 start, Vector2 end) {
+            _line.UpdateVertices(start, end);
         }
     }
 }

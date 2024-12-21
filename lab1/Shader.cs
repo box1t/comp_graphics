@@ -67,11 +67,12 @@ namespace lab1 {
             GL.DeleteProgram(Handle);
         }
 
+
         ~Shader() {
             Dispose();
         }
 
-        private void Dispose() {
+        public void Dispose() {
             Dispose(true);
             GC.SuppressFinalize(this);
         }

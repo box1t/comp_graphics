@@ -29,3 +29,4 @@
 /home/snowwy/Desktop/code/_0alg/git/comp_graphics/comp_graphics/lab2/obj/Debug/net8.0/lab2.pdb
 /home/snowwy/Desktop/code/_0alg/git/comp_graphics/comp_graphics/lab2/obj/Debug/net8.0/lab2.genruntimeconfig.cache
 /home/snowwy/Desktop/code/_0alg/git/comp_graphics/comp_graphics/lab2/obj/Debug/net8.0/ref/lab2.dll
+/home/snowwy/Desktop/code/_0alg/git/comp_graphics/comp_graphics/lab2/obj/Debug/net8.0/lab2.sourcelink.json
