@@ -3,5 +3,4 @@ bin
 obj
 build
 *.csproj
-l2/
-l3/
+lab6/some_files/

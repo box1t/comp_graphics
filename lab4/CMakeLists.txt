@@ -25,7 +25,7 @@ add_executable(lab4 main.cpp)
 find_package(OpenGL REQUIRED)
 
 # Подключаем библиотеки
-target_include_directories(l4 PRIVATE 
+target_include_directories(lab4 PRIVATE 
     ${GLEW_INCLUDE_DIRS}
     ${GLFW_INCLUDE_DIRS}
     ${GLM_INCLUDE_DIRS}

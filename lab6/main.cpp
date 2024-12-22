@@ -4,19 +4,26 @@
 #include <cmath>
 #include <cstdio>
 #include <unordered_map>
+#include <string>
+#include <sstream>
+#include <chrono>
+#include <vector>
 
 
 // Переменные камеры
 // Переменные камеры
-float camX = 0.0f, camY = 0.0f, camZ = 10.0f; // Позиция камеры
+float camX = 0.0f, camY = 0.0f, camZ = 0.0f; // Позиция камеры
 float yaw = 0.0f, pitch = 0.0f;              // Углы вращения камеры
 float moveSpeed = 0.1f;                       // Скорость движения камеры
-float mouseSensitivity = 0.05f;               // Чувствительность мыши
-float zoomLevel = 45.0f;
+float mouseSensitivity = 0.04f;               // Чувствительность мыши
+float zoomLevel = 60.0f;
 
+bool isMouseButtonPressed = false; // Отвечает за левую кнопку мыши
+int lastMouseX = 0, lastMouseY = 0; // Последняя позиция мыши
 
 // Состояние клавиш
 std::unordered_map<int, bool> keyState;
+bool isPerspective = true; // Флаг для переключения проекций
 
 
 // Текстура для заднего фона
@@ -25,7 +32,9 @@ GLuint backgroundTexture;
 GLuint cubeTexture;
 
 
-
+int frameCount = 0;
+float fps = 0.0f;
+int previousTime = 0;
 // Флаг автоматического вращения
 bool autoRotate = true;
 
@@ -71,8 +80,9 @@ void drawBackground() {
     glBindTexture(GL_TEXTURE_2D, backgroundTexture);
     glEnable(GL_TEXTURE_2D);
 
-    // Устанавливаем белый цвет перед отрисовкой текстуры
-    glColor3f(1.0f, 1.0f, 1.0f);
+    // Яркость при отрисовке фона:
+    float backgroundBrightness = 0.5f;
+    glColor3f(backgroundBrightness, backgroundBrightness, backgroundBrightness);
 
     glBegin(GL_QUADS);
     glTexCoord2f(0.0f, 0.0f); glVertex2f(-1.0f, -1.0f);
@@ -101,8 +111,8 @@ void drawCube() {
     glEnable(GL_LIGHTING);
     glEnable(GL_LIGHT0);
 
-    float lightPos[] = {2.0f, 4.0f, 2.0f, 1.0f}; // Позиция света
-    glLightfv(GL_LIGHT0, GL_POSITION, lightPos);
+    //float lightPos[] = {2.0f, 4.0f, 2.0f, 1.0f}; // Позиция света
+    //glLightfv(GL_LIGHT0, GL_POSITION, lightPos);
 
 
     // Верхняя грань (фиолетовый оттенок)
@@ -162,7 +172,13 @@ void drawCube() {
     glDisable(GL_TEXTURE_2D);
 }
 
-
+void drawLightSource(float x, float y, float z) {
+    glPushMatrix();
+    glTranslatef(x, y, z);
+    glColor3f(1.0f, 1.0f, 0.0f); // Желтый цвет для источника света
+    glutSolidSphere(0.2f, 16, 16); // Рисуем маленький шар
+    glPopMatrix();
+}
 
 void drawCheese() {
     // Координаты основания (нижний треугольник)
@@ -233,20 +249,70 @@ void drawAxes() {
 // Функция для настройки освещения
 void setupLighting(float camX, float camY, float camZ, float forwardX, float forwardY, float forwardZ) {
     glEnable(GL_LIGHTING);
+
+    // Направленный свет (Directional Light)
     glEnable(GL_LIGHT0);
+    float sunDirection[] = {0.0f, -1.0f, -0.5f, 0.0f}; // Свет направлен вниз и вперёд
+    float sunAmbient[] = {0.1f, 0.1f, 0.1f, 1.0f}; // Слабая окружающая подсветка
+    float sunDiffuse[] = {0.8f, 0.8f, 0.8f, 1.0f}; // Мягкий белый свет
+    glLightfv(GL_LIGHT0, GL_POSITION, sunDirection);
+    glLightfv(GL_LIGHT0, GL_AMBIENT, sunAmbient);
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, sunDiffuse);
 
-    float lightPos[] = {camX, camY, camZ, 1.0f}; // Свет на позиции камеры
-    float lightDir[] = {forwardX, forwardY, forwardZ}; // Направление света
-    float ambientLight[] = {0.05f, 0.05f, 0.05f, 1.0f};  // Очень слабая подсветка
-    float diffuseLight[] = {1.0f, 1.0f, 1.0f, 1.0f};  // Яркость света для куба
-
-    glLightfv(GL_LIGHT0, GL_POSITION, lightPos);
-    glLightfv(GL_LIGHT0, GL_SPOT_DIRECTION, lightDir);
-    glLightfv(GL_LIGHT0, GL_AMBIENT, ambientLight);
-    glLightfv(GL_LIGHT0, GL_DIFFUSE, diffuseLight);
-    glLightf(GL_LIGHT0, GL_SPOT_CUTOFF, 20.0f); // Уменьшаем угол конуса
-    glLightf(GL_LIGHT0, GL_SPOT_EXPONENT, 50.0f); // Экспоненциальное затухание
+    // Прожектор (Spotlight)
+    glEnable(GL_LIGHT1);
+    float spotlightPos[] = {0.0f, 5.0f, 0.0f, 1.0f}; // Позиция прожектора над сценой
+    float spotlightDir[] = {0.0f, -1.0f, 0.0f}; // Направление вниз
+    float spotlightAmbient[] = {0.1f, 0.1f, 0.1f, 1.0f}; // Слабый окружающий свет
+    float spotlightDiffuse[] = {1.0f, 1.0f, 1.0f, 1.0f}; // Яркий белый свет
+    glLightfv(GL_LIGHT1, GL_POSITION, spotlightPos);
+    glLightfv(GL_LIGHT1, GL_SPOT_DIRECTION, spotlightDir);
+    glLightfv(GL_LIGHT1, GL_AMBIENT, spotlightAmbient);
+    glLightfv(GL_LIGHT1, GL_DIFFUSE, spotlightDiffuse);
+    glLightf(GL_LIGHT1, GL_SPOT_CUTOFF, 30.0f); // Угол конуса света
+    glLightf(GL_LIGHT1, GL_SPOT_EXPONENT, 20.0f); // Экспоненциальное затухание
 }
+
+
+
+// Отображение текста на экране
+void renderText(float x, float y, const std::string& text) {
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    gluOrtho2D(0, 800, 0, 600); // Устанавливаем 2D-координаты
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    // Цвет текста - зелёный
+    glColor3f(0.0f, 1.0f, 0.0f);
+
+    glRasterPos2f(x, y);
+    for (char c : text) {
+        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, c);
+    }
+
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+}
+
+// Функция обновления FPS
+void calculateFPS() {
+    frameCount++;
+    int currentTime = glutGet(GLUT_ELAPSED_TIME);
+    int timeInterval = currentTime - previousTime;
+
+    if (timeInterval > 2000) { // Каждую секунду обновляем FPS
+        fps = frameCount / (timeInterval / 1000.0f);
+        previousTime = currentTime;
+        frameCount = 0;
+    }
+}
+
+
 
 // Отрисовка сцены
 void display() {
@@ -264,7 +330,10 @@ void display() {
     setupLighting(camX, camY, camZ, forwardX, forwardY, forwardZ); // Настраиваем освещение
 
 
+
     drawAxes(); // Рисуем координатные оси
+
+    drawLightSource(0.0f, 5.0f, 0.0f); // Позиция прожектора
 
     glPushMatrix();
     glRotatef(objAngle, 0.0f, 1.0f, 0.0f); // Вращаем объект
@@ -272,36 +341,64 @@ void display() {
     glPopMatrix();
     glDisable(GL_LIGHTING);
 
+    // Вывод координат камеры
+    std::ostringstream coord_ostream;
+    //coord_ostream << "Camera Position: (" << camX << ", " << camY << ", " << camZ << ")";
+    coord_ostream << "Camera Position: (" << camX << ", " << camY << ", " << camZ << "), "
+    << "Yaw: " << yaw << ", Pitch: " << pitch;
+    renderText(10, 560, coord_ostream.str()); // Вывод текста на экране
+
+
+        // Отображаем FPS
+    calculateFPS();
+    std::ostringstream fps_ostream;
+    fps_ostream << "FPS: " << fps;
+    renderText(10, 580, fps_ostream.str());
+
     glutSwapBuffers();
 }
 
 
-// Установка перспективы
 void setupProjection() {
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    gluPerspective(zoomLevel, 800.0f / 600.0f, 0.1f, 100.0f);
+    if (isPerspective) {
+        gluPerspective(zoomLevel, 800.0f / 600.0f, 0.1f, 100.0f);
+    } else {
+        float scale = zoomLevel / 45.0f; // Пример масштаба на основе zoomLevel
+        glOrtho(-10.0f * scale, 10.0f * scale, -10.0f * scale, 10.0f * scale, 0.1f, 100.0f);
+    }
     glMatrixMode(GL_MODELVIEW);
 }
+
+void toggleProjection() {
+    isPerspective = !isPerspective;
+    setupProjection();
+    glutPostRedisplay();
+}
+
 
 // Настройка OpenGL
 void setup() {
     glEnable(GL_DEPTH_TEST); // Включаем тест глубины
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // Чёрный фон
-    loadTexture("/home/snowwy/Desktop/code/_0alg/git/comp_graphics/comp_graphics/l3/l_lab3/assets/background.jpg", backgroundTexture); // Загрузка текстуры для фона
-    loadTexture("/home/snowwy/Desktop/code/_0alg/git/comp_graphics/comp_graphics/l3/l_lab3/assets/cube.jpg", cubeTexture);             // Загрузка текстуры для куба
+    loadTexture("/home/snowwy/Desktop/MAI/computer_graphics/comp_graphics/lab6/assets/background.jpg", backgroundTexture); // Загрузка текстуры для фона
+    loadTexture("/home/snowwy/Desktop/MAI/computer_graphics/comp_graphics/lab6/assets/cube.jpg", cubeTexture);             // Загрузка текстуры для куба
 
+    glEnable(GL_COLOR_MATERIAL);
+    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
 
-    initializeObjects();
+    //initializeObjects();
     setupProjection(); // Устанавливаем перспективу
 }
-
-
 
 
 // Обработка нажатия клавиш
 void keyboardPress(unsigned char key, int x, int y) {
     switch (key) {
+        case 'p':
+            toggleProjection();
+            break;
         case '=':
         case '-':
             keyState[key] = true;
@@ -352,19 +449,6 @@ void specialKeyRelease(int key, int x, int y) {
 
 
 
-// Обработка колеса мыши для масштабирования
-void mouseWheel(int button, int dir, int x, int y) {
-    if (dir > 0) {
-        zoomLevel -= 2.0f;
-        if (zoomLevel < 10.0f) zoomLevel = 10.0f; // Ограничение минимального масштаба
-    } else {
-        zoomLevel += 2.0f;
-        if (zoomLevel > 90.0f) zoomLevel = 90.0f; // Ограничение максимального масштаба
-    }
-    setupProjection();
-    glutPostRedisplay();
-}
-
 // Обновление состояния камеры
 void updateCamera() {
     float forwardX = cos(yaw) * cos(pitch);
@@ -412,38 +496,75 @@ void update() {
 }
 
 
-
-
+void mouseButton(int button, int state, int x, int y) {
+    if (button == GLUT_RIGHT_BUTTON) {
+        return; // Игнорируем нажатие правой кнопки мыши
+    }
+    if (button == GLUT_LEFT_BUTTON) {
+        if (state == GLUT_DOWN) {
+            isMouseButtonPressed = true;
+            lastMouseX = x;
+            lastMouseY = y;
+        } else if (state == GLUT_UP) {
+            isMouseButtonPressed = false;
+        }
+    }
+}
 
 void mouseMotion(int x, int y) {
-    static bool firstMouse = true;
-    static int lastX, lastY;
+    int deltaX = x - lastMouseX;
+    int deltaY = lastMouseY - y;
 
-    int screenWidth = glutGet(GLUT_WINDOW_WIDTH);
-    int screenHeight = glutGet(GLUT_WINDOW_HEIGHT);
+    
 
-    if (firstMouse) {
-        lastX = x;
-        lastY = y;
-        firstMouse = false;
-    }
-
-    int deltaX = x - lastX;
-    int deltaY = lastY - y; // Инвертируем, чтобы движение вверх было положительным
-
-    lastX = x;
-    lastY = y;
+    lastMouseX = x;
+    lastMouseY = y;
 
     yaw += deltaX * mouseSensitivity * M_PI / 180.0f;
     pitch += deltaY * mouseSensitivity * M_PI / 180.0f;
 
-    // Привязка центра камеры к положению курсора (без ограничения на движение)
-    if (pitch > M_PI) pitch -= 2 * M_PI;
-    if (pitch < -M_PI) pitch += 2 * M_PI;
+    if (pitch > M_PI / 2) pitch = M_PI / 2;
+    if (pitch < -M_PI / 2) pitch = -M_PI / 2;
 
     if (yaw > M_PI) yaw -= 2 * M_PI;
     if (yaw < -M_PI) yaw += 2 * M_PI;
 }
+
+
+
+
+
+
+
+// void mouseMotion(int x, int y) {
+//     static bool firstMouse = true;
+//     static int lastX, lastY;
+
+//     int screenWidth = glutGet(GLUT_WINDOW_WIDTH);
+//     int screenHeight = glutGet(GLUT_WINDOW_HEIGHT);
+
+//     if (firstMouse) {
+//         lastX = x;
+//         lastY = y;
+//         firstMouse = false;
+//     }
+
+//     int deltaX = x - lastX;
+//     int deltaY = lastY - y; // Инвертируем, чтобы движение вверх было положительным
+
+//     lastX = x;
+//     lastY = y;
+
+//     yaw += deltaX * mouseSensitivity * M_PI / 180.0f;
+//     pitch += deltaY * mouseSensitivity * M_PI / 180.0f;
+
+//     // Привязка центра камеры к положению курсора (без ограничения на движение)
+//     if (pitch > M_PI) pitch -= 2 * M_PI;
+//     if (pitch < -M_PI) pitch += 2 * M_PI;
+
+//     if (yaw > M_PI) yaw -= 2 * M_PI;
+//     if (yaw < -M_PI) yaw += 2 * M_PI;
+// }
 
 
 // Главная функция
@@ -452,7 +573,8 @@ int main(int argc, char** argv) {
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
     glutInitWindowSize(800, 600);
     glutCreateWindow("3D Cube with Background");
-
+    
+    
     setup();        // Загрузка текстуры для куба
 
     glutDisplayFunc(display);
@@ -463,7 +585,10 @@ int main(int argc, char** argv) {
     glutSpecialFunc(specialKeyPress);
     glutSpecialUpFunc(specialKeyRelease);
     glutIdleFunc(update);
+    
     glutPassiveMotionFunc(mouseMotion);
+    glutMouseFunc(mouseButton);
+    glutMotionFunc(mouseMotion);
 
 
     glutMainLoop();
