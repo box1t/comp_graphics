@@ -4,6 +4,7 @@
 ```sh
 cd /home/snowwy/Desktop/code/_0alg/git/comp_graphics/comp_graphics/
 dotnet restore
+dotnet build
 dotnet run
 ```
 
