@@ -1,5 +1,7 @@
 .vscode
 bin
 obj
+build
 *.csproj
 l2/
+l3/
