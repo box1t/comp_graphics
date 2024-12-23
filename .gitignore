@@ -5,3 +5,4 @@ build
 *.csproj
 lab6/some_files/
 lab5/l5/
+lab5/fps_raytracer/lib/
