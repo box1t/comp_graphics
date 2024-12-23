@@ -36,12 +36,12 @@ using System.Collections.Generic;
 3. Повторять CTRL-V при каждом изменении.
 
 ```sh
-
+mkdir build
 cd build
 rm -rf *
 cmake ..
 cmake --build .
-./lab6
+./lab5
 cd ..
 
 ```

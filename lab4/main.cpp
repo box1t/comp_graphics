@@ -68,27 +68,13 @@ void main()
 )";
 
 struct Camera {
-    float radius; // Радиус окружности
-    float angle;  // Угол вокруг объекта
-    float height; // Высота камеры
-
+    float radius, angle, height;
     Camera(float r, float a, float h) : radius(r), angle(a), height(h) {}
-
-    [[nodiscard]] glm::vec3 getPosition() const {
-        return {
-                radius * std::cos(angle),  // x
-                height,               // y
-                radius * std::sin(angle)   // z
-        };
+    glm::vec3 getPosition() const {
+        return { radius * std::cos(angle), height, radius * std::sin(angle) }; // x, y, z
     }
-
-    void rotate(float deltaAngle) {
-        angle += deltaAngle;
-    }
-
-    void changeHeight(float deltaHeight) {
-        height += deltaHeight;
-    }
+    void rotate(float deltaAngle) { angle += deltaAngle; }
+    void changeHeight(float deltaHeight) { height += deltaHeight;}
 };
 
 void processInput(GLFWwindow* window, Camera& camera) {
@@ -97,15 +83,15 @@ void processInput(GLFWwindow* window, Camera& camera) {
 
     // Изменение угла вращения
     if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
-        camera.rotate(0.001f); // Вращение влево
+        camera.rotate(0.05f); // Вращение влево
     if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
-        camera.rotate(-0.001f); // Вращение вправо
+        camera.rotate(-0.05f); // Вращение вправо
 
     // Изменение высоты камеры
     if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
-        camera.changeHeight(0.005f); // Подъем
+        camera.changeHeight(0.05f); // Подъем
     if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
-        camera.changeHeight(-0.005f); // Спуск
+        camera.changeHeight(-0.05f); // Спуск
 }
 
 // Функция для создания куба
@@ -208,7 +194,7 @@ unsigned int createPyramid() {
             -0.5f, -0.5f, 0.5f,   0.0f, -1.0f, 0.0f,
             0.5f, -0.5f, 0.5f,    0.0f, -1.0f, 0.0f
     };
-
+ 
     unsigned int VBO, VAO;
     glGenVertexArrays(1, &VAO);
     glGenBuffers(1, &VBO);
