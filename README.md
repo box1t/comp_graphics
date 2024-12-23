@@ -34,14 +34,14 @@ using System.Collections.Generic;
 1. Собираем CMakeLists.txt
 2. Перейдите в папку build, очистите старую сборку, пересоздайте новую, запустите
 3. Повторять CTRL-V при каждом изменении.
-
+ 
 ```sh
 mkdir build
 cd build
 rm -rf *
 cmake ..
 cmake --build .
-./tinyraytracer
+./lab6
 cd ..
 
 ```
