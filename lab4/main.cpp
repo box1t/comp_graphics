@@ -13,6 +13,8 @@
 #include <thread>
 #include <cmath>
 
+unsigned int rayTracingShader;
+
 // Размеры окна
 const unsigned int SCR_WIDTH = 1024;
 const unsigned int SCR_HEIGHT = 768;
@@ -38,6 +40,129 @@ void countdownAndActivateFightMode(bool& fightModeActive) {
     fightModeActive = true;
 }
 
+const char* ray_tracing_fragment = R"(
+#version 330 core
+out vec4 FragColor;
+
+uniform vec3 viewPos;      // Позиция камеры
+uniform vec3 lightPos;     // Позиция источника света
+uniform int maxBounces;    // Максимальное количество отражений
+uniform int materialType;  // Тип материала: 0 = матовый, 1 = зеркальный, 2 = преломляющий
+uniform vec3 objectColor;  // Цвет объекта
+
+const float airIOR = 1.0;  // Индекс преломления воздуха
+const float glassIOR = 1.5; // Индекс преломления стекла
+
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+struct Sphere {
+    vec3 center;
+    float radius;
+    vec3 color;
+    int materialType;
+};
+
+// Сцена (максимально 10 объектов)
+uniform Sphere spheres[10];
+uniform int sphereCount;
+
+// Функция пересечения луча со сферой
+bool intersectSphere(Ray ray, Sphere sphere, out float t) {
+    vec3 oc = ray.origin - sphere.center;
+    float a = dot(ray.direction, ray.direction);
+    float b = 2.0 * dot(oc, ray.direction);
+    float c = dot(oc, oc) - sphere.radius * sphere.radius;
+    float discriminant = b * b - 4 * a * c;
+
+    if (discriminant < 0.0) return false;
+
+    t = (-b - sqrt(discriminant)) / (2.0 * a);
+    return t > 0.0;
+}
+
+// Отражение вектора
+vec3 reflectRay(vec3 dir, vec3 normal) {
+    return dir - 2.0 * dot(dir, normal) * normal;
+}
+
+// Преломление вектора
+vec3 refractRay(vec3 dir, vec3 normal, float ior) {
+    float cosi = clamp(-1.0, 1.0, dot(dir, normal));
+    float etai = airIOR, etat = ior;
+    vec3 n = normal;
+    if (cosi < 0.0) {
+        cosi = -cosi;
+    } else {
+        swap(etai, etat);
+        n = -normal;
+    }
+    float eta = etai / etat;
+    float k = 1.0 - eta * eta * (1.0 - cosi * cosi);
+    return k < 0.0 ? vec3(0.0) : eta * dir + (eta * cosi - sqrt(k)) * n;
+}
+
+// Основная функция трассировки
+vec3 traceRay(Ray ray, int depth) {
+    if (depth > maxBounces) return vec3(0.0);
+
+    float closestT = 1e6;
+    Sphere hitSphere;
+    bool hit = false;
+
+    // Найти ближайшее пересечение
+    for (int i = 0; i < sphereCount; ++i) {
+        float t;
+        if (intersectSphere(ray, spheres[i], t) && t < closestT) {
+            closestT = t;
+            hitSphere = spheres[i];
+            hit = true;
+        }
+    }
+
+    if (!hit) return vec3(0.1); // Фоновый цвет
+
+    vec3 hitPoint = ray.origin + closestT * ray.direction;
+    vec3 normal = normalize(hitPoint - hitSphere.center);
+    vec3 lightDir = normalize(lightPos - hitPoint);
+
+    // Освещение
+    vec3 ambient = 0.1 * hitSphere.color;
+    vec3 diffuse = max(dot(normal, lightDir), 0.0) * hitSphere.color;
+
+    // Проверка тени
+    Ray shadowRay = Ray(hitPoint + 0.001 * normal, lightDir);
+    for (int i = 0; i < sphereCount; ++i) {
+        float t;
+        if (intersectSphere(shadowRay, spheres[i], t)) {
+            return ambient;
+        }
+    }
+
+    // Рефлексия или преломление
+    vec3 specular = vec3(0.0);
+    if (hitSphere.materialType == 1) { // Зеркальный
+        Ray reflectedRay = Ray(hitPoint + 0.001 * normal, reflectRay(ray.direction, normal));
+        specular = 0.8 * traceRay(reflectedRay, depth + 1);
+    } else if (hitSphere.materialType == 2) { // Преломляющий
+        Ray refractedRay = Ray(hitPoint - 0.001 * normal, refractRay(ray.direction, normal, glassIOR));
+        specular = 0.8 * traceRay(refractedRay, depth + 1);
+    }
+
+    return ambient + diffuse + specular;
+}
+
+void main() {
+    Ray ray;
+    ray.origin = viewPos;
+    ray.direction = normalize(FragPos - viewPos);
+
+    vec3 color = traceRay(ray, 0);
+    FragColor = vec4(color, 1.0);
+}
+)";
 
 
 // Вершинный шейдер
@@ -48,17 +173,40 @@ layout(location = 1) in vec3 aNormal;
 
 out vec3 FragPos;
 out vec3 Normal;
+out vec3 GouraudColor; // Цвет для Gouraud shading
+flat out vec3 FlatColor; // Цвет для Flat shading
 
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
+uniform vec3 lightPos;    // Позиция источника света
+uniform vec3 lightColor;
+uniform vec3 objectColor;
 
 void main()
 {
+    // Позиция фрагмента и нормаль
     FragPos = vec3(model * vec4(aPos, 1.0));
     Normal = mat3(transpose(inverse(model))) * aNormal;
+
+    // Рассчёт освещения (Ambient + Diffuse)
+    vec3 norm = normalize(Normal);
+    vec3 lightDirNormalized = normalize(lightPos - FragPos);
+    float diff = max(dot(norm, lightDirNormalized), 0.0);
+    vec3 diffuse = diff * lightColor;
+
+    // Ambient lighting
+    float ambientStrength = 0.1;
+    vec3 ambient = ambientStrength * lightColor;
+
+    // Итоговые цвета для затенений
+    GouraudColor = (ambient + diffuse) * objectColor; // Gouraud shading
+    FlatColor = GouraudColor; // Flat shading использует цвет вершины
+
+    // Позиция вершины
     gl_Position = projection * view * vec4(FragPos, 1.0);
 }
+
 )";
 
 // Фрагментный шейдер
@@ -68,52 +216,76 @@ out vec4 FragColor;
 
 in vec3 FragPos;
 in vec3 Normal;
+in vec3 GouraudColor; // Для Gouraud shading
+flat in vec3 FlatColor; // Для Flat shading
 
-uniform vec3 lightPos;    // Позиция точечного источника света
-uniform vec3 lightDir;    // Направление направленного источника света
+uniform vec3 lightPos;    // Позиция источника света
+uniform vec3 lightDir;    // Направление света (не используется для Flat и Gouraud)
 uniform vec3 viewPos;     // Позиция камеры
 uniform vec3 lightColor;
 uniform vec3 objectColor;
-uniform int lightMode;    // Режим освещения: 0 = Ambient, 1 = Diffuse, 2 = All
+uniform int shadingMode;  // Режим затенения: 0 = Flat, 1 = Gouraud, 2 = Phong
 
 void main()
 {
     vec3 result = vec3(0.0);
-    vec3 norm = normalize(Normal);
 
-    // Ambient lighting
-    float ambientStrength = 0.1;
-    vec3 ambient = ambientStrength * lightColor;
+    if (shadingMode == 0) {
+        // Flat shading
+        result = FlatColor;
+    } else if (shadingMode == 1) {
+        // Gouraud shading
+        result = GouraudColor;
+    } else if (shadingMode == 2) {
+        // Phong shading (освещение рассчитывается в фрагментном шейдере)
+        vec3 norm = normalize(Normal);
+        vec3 lightDirNormalized = normalize(lightPos - FragPos);
 
-    // Diffuse lighting (Point light)
-    vec3 lightDirNormalized = normalize(lightPos - FragPos);
-    float diffPoint = max(dot(norm, lightDirNormalized), 0.0);
-    vec3 diffusePoint = diffPoint * lightColor;
+        // Diffuse lighting
+        float diff = max(dot(norm, lightDirNormalized), 0.0);
+        vec3 diffuse = diff * lightColor;
 
-    // Diffuse lighting (Directional light)
-    float diffDir = max(dot(norm, lightDir), 0.0);
-    vec3 diffuseDir = diffDir * lightColor;
+        // Ambient lighting
+        float ambientStrength = 0.1;
+        vec3 ambient = ambientStrength * lightColor;
 
-    // Specular lighting (optional extension)
-    vec3 viewDir = normalize(viewPos - FragPos);
-    vec3 reflectDir = reflect(-lightDirNormalized, norm);
-    float specularStrength = 0.5;
-    float shininess = 32.0;
-    float spec = pow(max(dot(viewDir, reflectDir), 0.0), shininess);
-    vec3 specular = specularStrength * spec * lightColor;
+        // Specular lighting
+        vec3 viewDir = normalize(viewPos - FragPos);
+        vec3 reflectDir = reflect(-lightDirNormalized, norm);
+        float specularStrength = 0.5;
+        float shininess = 32.0;
+        float spec = pow(max(dot(viewDir, reflectDir), 0.0), shininess);
+        vec3 specular = specularStrength * spec * lightColor;
 
-    // Combine lighting based on lightMode
-    if (lightMode == 0) {
-        result = ambient; // Ambient only
-    } else if (lightMode == 1) {
-        result = ambient + diffusePoint + diffuseDir; // Ambient + Diffuse
-    } else if (lightMode == 2) {
-        result = ambient + diffusePoint + diffuseDir + specular; // All modes
+        result = (ambient + diffuse + specular) * objectColor;
     }
 
-    FragColor = vec4(result * objectColor, 1.0);
+    FragColor = vec4(result, 1.0);
 }
 )";
+int shadingMode = 2; // По умолчанию Phong Shading
+
+////////
+
+struct Sphere {
+    glm::vec3 center;
+    float radius;
+    glm::vec3 color;
+    int materialType; // 0 = матовый, 1 = зеркальный, 2 = преломляющий
+
+    Sphere(glm::vec3 c, float r, glm::vec3 col, int type)
+        : center(c), radius(r), color(col), materialType(type) {}
+};
+
+
+/////
+
+enum RenderMode {
+    FORWARD_RENDERING,
+    RAY_TRACING
+};
+
+RenderMode currentMode = FORWARD_RENDERING;
 
 enum ObjectType {
     ENEMY,
@@ -345,6 +517,7 @@ struct SceneObject {
 
 class Scene {
 public:
+    RenderMode renderMode = FORWARD_RENDERING;
     std::vector<SceneObject> objects;
     int enemyCounter = 0;
     int foodCounter = 0;
@@ -542,6 +715,11 @@ void processInput(GLFWwindow* window, Camera& camera, int& currentSceneIndex, in
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
 
+    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
+        currentMode = (currentMode == FORWARD_RENDERING) ? RAY_TRACING : FORWARD_RENDERING;
+        std::cout << (currentMode == RAY_TRACING ? "Ray Tracing Mode" : "Forward Rendering Mode") << std::endl;
+    }
+
     if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
         camera.rotate(0.05f);
     if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
@@ -550,6 +728,18 @@ void processInput(GLFWwindow* window, Camera& camera, int& currentSceneIndex, in
         camera.changeHeight(0.05f);
     if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
         camera.changeHeight(-0.05f);
+
+    static bool keyPressed = false;
+    if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS && !keyPressed) {
+        keyPressed = true;
+        shadingMode = (shadingMode + 1) % 3; // Переключаем между 0, 1, 2
+        if (shadingMode == 0) std::cout << "Flat Shading enabled." << std::endl;
+        else if (shadingMode == 1) std::cout << "Gouraud Shading enabled." << std::endl;
+        else if (shadingMode == 2) std::cout << "Phong Shading enabled." << std::endl;
+    }
+    if (glfwGetKey(window, GLFW_KEY_F) == GLFW_RELEASE) {
+        keyPressed = false;
+    }
 
     static int lastSceneIndex = currentSceneIndex;
     static bool saveKeyPressed = false;
@@ -728,7 +918,16 @@ int main() {
 
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
+//
+//
+std::vector<Sphere> spheres;
+spheres.push_back(Sphere(glm::vec3(0.0f, 0.0f, -5.0f), 1.0f, glm::vec3(1.0f, 0.0f, 0.0f), 1)); // Зеркальная сфера
+spheres.push_back(Sphere(glm::vec3(2.0f, 0.0f, -5.0f), 1.0f, glm::vec3(0.0f, 1.0f, 0.0f), 0)); // Матовая сфера
+spheres.push_back(Sphere(glm::vec3(-2.0f, 0.0f, -5.0f), 1.0f, glm::vec3(0.0f, 0.0f, 1.0f), 2)); // Преломляющая сфера
 
+rayTracingShader = glCreateProgram();
+//
+//
     // // Создание объектов
     // unsigned int cubeVAO = createCube();
     // unsigned int pyramidVAO = createPyramid();
@@ -742,6 +941,8 @@ int main() {
 
 
     Scene scene1, scene2;
+//    scene1.renderMode = Scene::FORWARD_RENDERING;
+//    scene2.renderMode = Scene::RAY_TRACING;
     scene1.addObject(cubeObj);
     scene1.addObject(pyramidObj);
     scene2.addObject(sphereObj);
@@ -772,12 +973,34 @@ int main() {
         glEnable(GL_DEPTH_TEST);
 
         glUseProgram(shaderProgram);
+        glUniform1i(glGetUniformLocation(shaderProgram, "shadingMode"), shadingMode);
         glUniform3f(glGetUniformLocation(shaderProgram, "lightPos"), 0.0f, 5.0f, 5.0f);
         glUniform3f(glGetUniformLocation(shaderProgram, "lightColor"), 1.0f, 1.0f, 1.0f);
         glUniform3f(glGetUniformLocation(shaderProgram, "objectColor"), 0.8f, 0.2f, 0.2f);
         glUniform1i(glGetUniformLocation(shaderProgram, "lightMode"), lightMode);
 
-        scenes[currentSceneIndex].render(shaderProgram, camera.getPosition());
+        //scenes[currentSceneIndex].render(shaderProgram, camera.getPosition());
+//raytrace
+//
+        glUniform3f(glGetUniformLocation(rayTracingShader, "viewPos"), camera.getPosition().x, camera.getPosition().y, camera.getPosition().z);
+        glUniform3f(glGetUniformLocation(rayTracingShader, "lightPos"), 0.0f, 5.0f, 5.0f);
+        glUniform1i(glGetUniformLocation(rayTracingShader, "maxBounces"), 3);
+        glUniform1i(glGetUniformLocation(rayTracingShader, "sphereCount"), spheres.size());
+        for (int i = 0; i < spheres.size(); ++i) {
+            Sphere& s = spheres[i];
+            glUniform3fv(glGetUniformLocation(rayTracingShader, ("spheres[" + std::to_string(i) + "].center").c_str()), 1, glm::value_ptr(s.center));
+            glUniform1f(glGetUniformLocation(rayTracingShader, ("spheres[" + std::to_string(i) + "].radius").c_str()), s.radius);
+            glUniform3fv(glGetUniformLocation(rayTracingShader, ("spheres[" + std::to_string(i) + "].color").c_str()), 1, glm::value_ptr(s.color));
+            glUniform1i(glGetUniformLocation(rayTracingShader, ("spheres[" + std::to_string(i) + "].materialType").c_str()), s.materialType);
+        }
+        if (currentMode == FORWARD_RENDERING) {
+            scenes[currentSceneIndex].render(shaderProgram, camera.getPosition());
+        } else if (currentMode == RAY_TRACING) {
+            glUseProgram(rayTracingShader);
+            glUniform3f(glGetUniformLocation(rayTracingShader, "viewPos"), camera.getPosition().x, camera.getPosition().y, camera.getPosition().z);
+            glDrawArrays(GL_TRIANGLES, 0, 6); // Полноэкранный квадрат
+        }
+
 
         glfwSwapBuffers(window);
         glfwPollEvents();
