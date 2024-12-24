@@ -7,7 +7,7 @@ dotnet restore
 dotnet build
 dotnet run
 ```
-
+ 
 - Для использования шрифтов и не только:
 ```sh
 sudo apt install libfreetype6-dev

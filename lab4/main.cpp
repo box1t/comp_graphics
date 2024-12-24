@@ -12,33 +12,9 @@
 #include <random>
 #include <thread>
 #include <cmath>
+#include <unordered_map>
 
-unsigned int rayTracingShader;
-
-// Размеры окна
-const unsigned int SCR_WIDTH = 1024;
-const unsigned int SCR_HEIGHT = 768;
-const int MAX_OBJECTS = 100; // Максимальное количество объектов
-bool fightModeActive = false; // Глобальная переменная
-const float COLLISION_RADIUS_SQ = 1.0f; // Квадрат радиуса коллизи
-int lightMode = 0; // 0 = Ambient, 1 = Diffuse, 2 = All
-
-float randomFloat(float min, float max) {
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    std::uniform_real_distribution<> dis(min, max);
-    return dis(gen);
-}
-
-void countdownAndActivateFightMode(bool& fightModeActive) {
-    std::cout << "Get ready..." << std::endl;
-    for (int i = 5; i > 0; --i) {
-        std::cout << i << "..." << std::endl;
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
-    std::cout << "FIGHT!" << std::endl;
-    fightModeActive = true;
-}
+ 
 
 const char* ray_tracing_fragment = R"(
 #version 330 core
@@ -263,10 +239,18 @@ void main()
     FragColor = vec4(result, 1.0);
 }
 )";
+
+/////////////////           /////////////////
+            // Константы и освещение
+/////////////////           /////////////////
+
+// Обработка клавиш для управления камерой
+std::unordered_map<int, bool> keyState;
+
+// параметр освещения
 int shadingMode = 2; // По умолчанию Phong Shading
 
-////////
-
+// Сфера для рейтрейсинга
 struct Sphere {
     glm::vec3 center;
     float radius;
@@ -276,10 +260,7 @@ struct Sphere {
     Sphere(glm::vec3 c, float r, glm::vec3 col, int type)
         : center(c), radius(r), color(col), materialType(type) {}
 };
-
-
 /////
-
 enum RenderMode {
     FORWARD_RENDERING,
     RAY_TRACING
@@ -287,24 +268,154 @@ enum RenderMode {
 
 RenderMode currentMode = FORWARD_RENDERING;
 
-enum ObjectType {
-    ENEMY,
-    FOOD,
-    AMBIENT
-};
 
+
+unsigned int rayTracingShader;
+
+
+// Размеры окна
+const unsigned int SCR_WIDTH = 1024;
+const unsigned int SCR_HEIGHT = 768;
+const int MAX_OBJECTS = 100; // Максимальное количество объектов
+bool fightModeActive = false; // Глобальная переменная
+const float COLLISION_RADIUS_SQ = 1.0f; // Квадрат радиуса коллизи
+int lightMode = 0; // 0 = Ambient, 1 = Diffuse, 2 = All
+
+
+
+
+/////////////////           /////////////////
+            // Камера и мышь
+/////////////////           /////////////////
+
+// Переменные для управления камерой
+float camX = 0.0f, camY = 1.0f, camZ = 5.0f; // Позиция камеры
+float yaw = -90.0f, pitch = 0.0f;           // Углы поворота камеры
+float moveSpeed = 2.5f;                     // Скорость движения камеры
+float mouseSensitivity = 0.1f;             // Чувствительность мыши
+float zoomLevel = 45.0f;                   // Угол обзора
+bool isPerspective = true;                 // Перспективная или ортографическая проекция
+bool firstMouse = true;                    // Для сброса позиции мыши
+float lastX = SCR_WIDTH / 2.0f;
+float lastY = SCR_HEIGHT / 2.0f;
+
+
+// Камера
 struct Camera {
-    float radius, angle, height;
-    Camera(float r, float a, float h) : radius(r), angle(a), height(h) {}
-    glm::vec3 getPosition() const {
-        return { radius * std::cos(angle), height, radius * std::sin(angle) }; // x, y, z
+    
+    glm::vec3 position, front, up, right, worldUp;
+    float yaw, pitch, moveSpeed = 2.5f, mouseSensitivity = 0.1f, zoomLevel = 45.0f;
+
+        Camera(glm::vec3 startPosition, glm::vec3 startUp, float startYaw, float startPitch)
+        : position(startPosition), worldUp(startUp), yaw(startYaw), pitch(startPitch) {
+        updateCameraVectors();
     }
-    void rotate(float deltaAngle) { angle += deltaAngle; }
-    void changeHeight(float deltaHeight) { height += deltaHeight;}
+
+        glm::mat4 getViewMatrix() {
+        return glm::lookAt(position, position + front, up);
+    }
+        void rotate(float deltaYaw) {
+        yaw += deltaYaw;
+        updateCameraVectors();
+    }
+
+    void changeHeight(float deltaHeight) {
+        position.y += deltaHeight;
+    }
+
+    glm::vec3 getPosition() const {
+        return position;
+    }
+
+        void processKeyboard(int direction, float deltaTime) {
+        float velocity = moveSpeed * deltaTime;
+        if (direction == GLFW_KEY_W)
+            position += front * velocity;
+        if (direction == GLFW_KEY_S)
+            position -= front * velocity;
+        if (direction == GLFW_KEY_A)
+            position -= right * velocity;
+        if (direction == GLFW_KEY_D)
+            position += right * velocity;
+    }
+
+    void processMouseMovement(float xoffset, float yoffset, GLboolean constrainPitch = true) {
+        xoffset *= mouseSensitivity;
+        yoffset *= mouseSensitivity;
+
+        yaw += xoffset;
+        pitch += yoffset;
+
+        if (constrainPitch) {
+            if (pitch > 89.0f)
+                pitch = 89.0f;
+            if (pitch < -89.0f)
+                pitch = -89.0f;
+        }
+
+        updateCameraVectors();
+    }
+
+    void processMouseScroll(float yoffset) {
+        if (zoomLevel >= 1.0f && zoomLevel <= 45.0f)
+            zoomLevel -= yoffset;
+        if (zoomLevel <= 1.0f)
+            zoomLevel = 1.0f;
+        if (zoomLevel >= 45.0f)
+            zoomLevel = 45.0f;
+    }
+
+private:
+    void updateCameraVectors() {
+        glm::vec3 frontVec;
+        frontVec.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+        frontVec.y = sin(glm::radians(pitch));
+        frontVec.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+        front = glm::normalize(frontVec);
+        right = glm::normalize(glm::cross(front, worldUp));
+        up = glm::normalize(glm::cross(right, front));
+    }
 };
 
+// Настройка проекции
+glm::mat4 setupProjection(const Camera& camera) {
+    if (isPerspective) {
+        return glm::perspective(glm::radians(camera.zoomLevel), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+    } else {
+        float scale = camera.zoomLevel / 45.0f;
+        return glm::ortho(-10.0f * scale, 10.0f * scale, -10.0f * scale, 10.0f * scale, 0.1f, 100.0f);
+    }
+}
+
+void toggleProjection() {
+    isPerspective = !isPerspective;
+        std::cout << (isPerspective ? "Perspective projection enabled" : "Orthographic projection enabled") << std::endl;
+}
 
 
+// Обработка движения мыши
+void mouseCallback(GLFWwindow* window, double xpos, double ypos, Camera& camera) {
+    static bool firstMouse = true;
+    if (firstMouse) {
+        lastX = xpos;
+        lastY = ypos;
+        firstMouse = false;
+    }
+
+    float xoffset = xpos - lastX;
+    float yoffset = lastY - ypos; // Перевёрнуто, так как ось Y в оконных системах растёт вниз
+
+    lastX = xpos;
+    lastY = ypos;
+
+    camera.processMouseMovement(xoffset, yoffset);
+}
+
+
+
+/////////////////           /////////////////
+            // Игровые объекты
+/////////////////           /////////////////
 
 // Функция для создания куба
 unsigned int createCube() {
@@ -428,6 +539,7 @@ unsigned int createPyramid() {
     return VAO;
 }
 
+// Создание сферы
 unsigned int createSphere(float radius, int stacks, int slices) {
     std::vector<float> vertices;
     std::vector<float> normals;
@@ -503,6 +615,20 @@ unsigned int createSphere(float radius, int stacks, int slices) {
     return VAO;
 }
 
+
+/////////////////           /////////////////
+            // Менеджер сцены
+/////////////////           /////////////////
+
+// Тип объекта
+enum ObjectType {
+    ENEMY,
+    FOOD,
+    AMBIENT
+};
+
+
+// Объект сцены
 struct SceneObject {
     unsigned int VAO;
     glm::vec3 position;
@@ -514,6 +640,9 @@ struct SceneObject {
         : VAO(vao), position(pos), vertexCount(vCount), useIndices(indices), type(objType) {}
 
 };
+
+// Сцена (не переделать, пока камера неисправна)
+// а исправление камеры влечет за собой изменение сцены
 
 class Scene {
 public:
@@ -536,7 +665,6 @@ public:
             else if (obj.type == AMBIENT) ambientCounter++;
         }
     }
-
 
     void clearObjects() {
         objects.clear();
@@ -597,48 +725,113 @@ public:
         }
     }
 
+    void updateEnemy(SceneObject& enemy, const glm::vec3& cameraPosition) {
+        glm::vec3 direction = glm::normalize(cameraPosition - enemy.position);
+        enemy.position += direction * 0.01f; // Скорость движения
+    }
+
+    bool checkCollision(const glm::vec3& objPosition, const glm::vec3& cameraPosition, float collisionRadiusSq) {
+        float distanceSq = glm::length(cameraPosition - objPosition);
+        return distanceSq * distanceSq < collisionRadiusSq;
+    }
+
+    void handleEnemyCollision(SceneObject& enemy, std::vector<SceneObject>& objects, int& enemyCounter) {
+        enemy = objects.back();
+        objects.pop_back();
+        enemyCounter--;
+        std::cout << "Enemy reached the camera! Enemies left: " << enemyCounter << std::endl;
+    }
+
+    void updateFood(SceneObject& food, const glm::vec3& cameraPosition, std::vector<SceneObject>& objects, int& foodCounter, int& foodConsumed) {
+        if (checkCollision(food.position, cameraPosition, COLLISION_RADIUS_SQ)) {
+            food = objects.back();
+            objects.pop_back();
+            foodCounter--;
+            foodConsumed++;
+            std::cout << "Food consumed! Total: " << foodConsumed << std::endl;
+        } else {
+            food.position = glm::rotate(glm::mat4(1.0f), glm::radians(1.0f), glm::vec3(0, 1, 0)) * glm::vec4(food.position, 1.0);
+        }
+    }
+
+    void renderObject(const SceneObject& obj, int modelLoc) {
+        glm::mat4 model = glm::translate(glm::mat4(1.0f), obj.position);
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+
+        glBindVertexArray(obj.VAO);
+        if (obj.useIndices) {
+            glDrawElements(GL_TRIANGLES, obj.vertexCount, GL_UNSIGNED_INT, nullptr);
+        } else {
+            glDrawArrays(GL_TRIANGLES, 0, obj.vertexCount);
+        }
+    }
 
     void render(unsigned int shaderProgram, const glm::vec3& cameraPosition) {
         int modelLoc = glGetUniformLocation(shaderProgram, "model");
 
-        for (auto& obj : objects) {
-            if (obj.type == ENEMY) {
-                glm::vec3 direction = glm::normalize(cameraPosition - obj.position);
-                obj.position += direction * 0.01f; // Скорость движения
+        for (size_t i = 0; i < objects.size(); ++i) {
+            SceneObject& obj = objects[i];
 
-                float distanceSq = glm::length(cameraPosition - obj.position);
-                distanceSq *= distanceSq; // Квадрат расстояния
-                if (distanceSq < COLLISION_RADIUS_SQ) {
-                    obj = objects.back();
-                    objects.pop_back();
-                    enemyCounter--;
-                    std::cout << "Enemy reached the camera! Enemies left: " << enemyCounter << std::endl;
-                }
-            } else if (obj.type == FOOD) {
-                float distanceSq = glm::length(cameraPosition - obj.position);
-                distanceSq *= distanceSq; // Квадрат расстояния
-                if (distanceSq < COLLISION_RADIUS_SQ) {
-                    obj = objects.back();
-                    objects.pop_back();
-                    foodCounter--;
-                    foodConsumed++;
-                    std::cout << "Food consumed! Total: " << foodConsumed << std::endl;
+            if (obj.type == ENEMY) {
+                updateEnemy(obj, cameraPosition);
+
+                if (checkCollision(obj.position, cameraPosition, COLLISION_RADIUS_SQ)) {
+                    handleEnemyCollision(obj, objects, enemyCounter);
+                    --i; // Так как объект удалён, корректируем индекс.
                     continue;
                 }
-                obj.position = glm::rotate(glm::mat4(1.0f), glm::radians(1.0f), glm::vec3(0, 1, 0)) * glm::vec4(obj.position, 1.0);
+            } else if (obj.type == FOOD) {
+                updateFood(obj, cameraPosition, objects, foodCounter, foodConsumed);
             }
 
-            glm::mat4 model = glm::translate(glm::mat4(1.0f), obj.position);
-            glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-
-            glBindVertexArray(obj.VAO);
-            if (obj.useIndices) {
-                glDrawElements(GL_TRIANGLES, obj.vertexCount, GL_UNSIGNED_INT, nullptr);
-            } else {
-                glDrawArrays(GL_TRIANGLES, 0, obj.vertexCount);
-            }
+            renderObject(obj, modelLoc);
         }
+    }
+
+
+
+    // void render(unsigned int shaderProgram, const glm::vec3& cameraPosition) {
+    //     int modelLoc = glGetUniformLocation(shaderProgram, "model");
+
+    //     for (auto& obj : objects) {
+    //         if (obj.type == ENEMY) {
+    //             glm::vec3 direction = glm::normalize(cameraPosition - obj.position);
+    //             obj.position += direction * 0.01f; // Скорость движения
+
+    //             float distanceSq = glm::length(cameraPosition - obj.position);
+    //             distanceSq *= distanceSq; // Квадрат расстояния
+    //             if (distanceSq < COLLISION_RADIUS_SQ) {
+    //                 obj = objects.back();
+    //                 objects.pop_back();
+    //                 enemyCounter--;
+    //                 std::cout << "Enemy reached the camera! Enemies left: " << enemyCounter << std::endl;
+    //             }
+    //         } else if (obj.type == FOOD) {
+    //             float distanceSq = glm::length(cameraPosition - obj.position);
+    //             distanceSq *= distanceSq; // Квадрат расстояния
+    //             if (distanceSq < COLLISION_RADIUS_SQ) {
+    //                 obj = objects.back();
+    //                 objects.pop_back();
+    //                 foodCounter--;
+    //                 foodConsumed++;
+    //                 std::cout << "Food consumed! Total: " << foodConsumed << std::endl;
+    //                 continue;
+    //             }
+    //             obj.position = glm::rotate(glm::mat4(1.0f), glm::radians(1.0f), glm::vec3(0, 1, 0)) * glm::vec4(obj.position, 1.0);
+    //         }
+
+    //         glm::mat4 model = glm::translate(glm::mat4(1.0f), obj.position);
+    //         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+
+    //         glBindVertexArray(obj.VAO);
+    //         if (obj.useIndices) {
+    //             glDrawElements(GL_TRIANGLES, obj.vertexCount, GL_UNSIGNED_INT, nullptr);
+    //         } else {
+    //             glDrawArrays(GL_TRIANGLES, 0, obj.vertexCount);
+    //         }
+    //     }
     
+    // }
 
 
         // for (const auto& obj : objects) {
@@ -652,15 +845,23 @@ public:
         //         glDrawArrays(GL_TRIANGLES, 0, obj.vertexCount);
         //     }
         // }
-    }
-
-
 
 };
 
 
+/////////////////           /////////////////
+            // Игровая логика
+/////////////////           /////////////////
 
+// Генерация точек для спавна объектов сцены
+float randomFloat(float min, float max) {
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    std::uniform_real_distribution<> dis(min, max);
+    return dis(gen);
+}
 
+// Игровой режим
 void fightMode(Scene& currentScene, unsigned int cubeVAO, unsigned int sphereVAO) {
     if (!fightModeActive) return;
 
@@ -711,15 +912,61 @@ void fightMode(Scene& currentScene, unsigned int cubeVAO, unsigned int sphereVAO
 }
 
 
-void processInput(GLFWwindow* window, Camera& camera, int& currentSceneIndex, int sceneCount, Scene& currentScene, unsigned int cubeVAO, unsigned int pyramidVAO, unsigned int sphereVAO) {
-    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-        glfwSetWindowShouldClose(window, true);
-
-    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
-        currentMode = (currentMode == FORWARD_RENDERING) ? RAY_TRACING : FORWARD_RENDERING;
-        std::cout << (currentMode == RAY_TRACING ? "Ray Tracing Mode" : "Forward Rendering Mode") << std::endl;
+// Отсчет до боевого режима
+void countdownAndActivateFightMode(bool& fightModeActive) {
+    std::cout << "Get ready..." << std::endl;
+    for (int i = 5; i > 0; --i) {
+        std::cout << i << "..." << std::endl;
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
+    std::cout << "FIGHT!" << std::endl;
+    fightModeActive = true;
+}
 
+
+
+/////////////////           /////////////////
+        // Менеджер введенных команд
+/////////////////           /////////////////
+
+// Обработка клавиш для выхода
+void handleExitInput(GLFWwindow* window) {
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+        glfwSetWindowShouldClose(window, true);
+    }
+}
+
+// Обработка ввода для управления камерой
+void handleCameraInput(GLFWwindow* window, Camera& camera, float deltaTime) {
+    bool toggleKeyPressed = false;
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        camera.processKeyboard(GLFW_KEY_W, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        camera.processKeyboard(GLFW_KEY_S, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        camera.processKeyboard(GLFW_KEY_A, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        camera.processKeyboard(GLFW_KEY_D, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS) {
+        camera.zoomLevel = std::max(camera.zoomLevel - 2.0f * deltaTime, 10.0f);
+    }
+    if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS) {
+        camera.zoomLevel = std::min(camera.zoomLevel + 2.0f * deltaTime, 90.0f);
+    }
+    if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS) {
+        static bool toggleKeyPressed = false;
+        if (!toggleKeyPressed) {
+            toggleProjection();
+            toggleKeyPressed = true;
+        }
+    } else {
+        toggleKeyPressed = false;
+    }
+}
+
+// А есть ли всё ещё параметр высоты? или уже устарел?
+// Обработка вращения и высоты камеры
+void handleCameraMovement(GLFWwindow* window, Camera& camera) {
     if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS)
         camera.rotate(0.05f);
     if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS)
@@ -728,7 +975,23 @@ void processInput(GLFWwindow* window, Camera& camera, int& currentSceneIndex, in
         camera.changeHeight(0.05f);
     if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
         camera.changeHeight(-0.05f);
+}
 
+// Обработка переключения режимов
+void handleModeSwitch(GLFWwindow* window) {
+    static bool keyPressed = false;
+    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS && !keyPressed) {
+        keyPressed = true;
+        currentMode = (currentMode == FORWARD_RENDERING) ? RAY_TRACING : FORWARD_RENDERING;
+        std::cout << (currentMode == RAY_TRACING ? "Ray Tracing Mode" : "Forward Rendering Mode") << std::endl;
+    }
+    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_RELEASE) {
+        keyPressed = false;
+    }
+}
+
+// Переключение режимов шейдинга
+void handleShadingMode(GLFWwindow* window) {
     static bool keyPressed = false;
     if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS && !keyPressed) {
         keyPressed = true;
@@ -740,12 +1003,78 @@ void processInput(GLFWwindow* window, Camera& camera, int& currentSceneIndex, in
     if (glfwGetKey(window, GLFW_KEY_F) == GLFW_RELEASE) {
         keyPressed = false;
     }
+}
 
-    static int lastSceneIndex = currentSceneIndex;
-    static bool saveKeyPressed = false;
-    static bool loadKeyPressed = false;
+// Управление освещением
+void handleLightingInput(GLFWwindow* window) {
     static bool toggleKeyJPressed = false;
     static bool toggleKeyKPressed = false;
+
+    if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS && !toggleKeyJPressed) {
+        toggleKeyJPressed = true;
+        lightMode = (lightMode + 1) % 3;
+        std::cout << "Light mode: " << (lightMode == 0 ? "Ambient" : (lightMode == 1 ? "Diffuse" : "All")) << std::endl;
+    }
+    if (glfwGetKey(window, GLFW_KEY_J) == GLFW_RELEASE) {
+        toggleKeyJPressed = false;
+    }
+
+    if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS && !toggleKeyKPressed) {
+        toggleKeyKPressed = true;
+        lightMode = 2; // All modes
+        std::cout << "Light mode: All" << std::endl;
+    }
+    if (glfwGetKey(window, GLFW_KEY_K) == GLFW_RELEASE) {
+        toggleKeyKPressed = false;
+    }
+}
+
+// Обработка добавления объектов
+void handleObjectCreation(GLFWwindow* window, Scene& currentScene, unsigned int cubeVAO, unsigned int pyramidVAO, unsigned int sphereVAO) {
+    static bool addCubePressed = false;
+    static bool addPyramidPressed = false;
+    static bool addSpherePressed = false;
+
+    float radius = 5.0f;
+    float fixedHeight = 0.0f;
+
+    if (glfwGetKey(window, GLFW_KEY_5) == GLFW_PRESS && !addCubePressed) {
+        addCubePressed = true;
+        glm::vec3 randomPosition = glm::vec3(randomFloat(-radius, radius), fixedHeight, randomFloat(-radius, radius));
+        currentScene.addObject({cubeVAO, randomPosition, 36, false, FOOD});
+        std::cout << "Added cube at position: (" << randomPosition.x << ", " << randomPosition.y << ", " << randomPosition.z << ")" << std::endl;
+    } else {
+        addCubePressed = false;
+    }
+
+    if (glfwGetKey(window, GLFW_KEY_6) == GLFW_PRESS && !addPyramidPressed) {
+        addPyramidPressed = true;
+        glm::vec3 randomPosition = glm::vec3(randomFloat(-radius, radius), fixedHeight, randomFloat(-radius, radius));
+        currentScene.addObject({pyramidVAO, randomPosition, 18, false, AMBIENT});
+        std::cout << "Added pyramid at position: (" << randomPosition.x << ", " << randomPosition.y << ", " << randomPosition.z << ")" << std::endl;
+    } else {
+        addPyramidPressed = false;
+    }
+
+    if (glfwGetKey(window, GLFW_KEY_7) == GLFW_PRESS && !addSpherePressed) {
+        addSpherePressed = true;
+        glm::vec3 randomPosition = glm::vec3(randomFloat(-radius, radius), fixedHeight, randomFloat(-radius, radius));
+        currentScene.addObject({sphereVAO, randomPosition, 2400, true, ENEMY});
+        std::cout << "Added sphere at position: (" << randomPosition.x << ", " << randomPosition.y << ", " << randomPosition.z << ")" << std::endl;
+    } else {
+        addSpherePressed = false;
+    }
+
+            // Очистка объектов на клавишу 9
+    if (glfwGetKey(window, GLFW_KEY_9) == GLFW_PRESS) {
+        currentScene.clearObjects();
+    }
+}
+
+// Сохранение и загрузка сцены
+void handleSceneSaveLoad(GLFWwindow* window, Scene& currentScene, unsigned int cubeVAO, unsigned int pyramidVAO, unsigned int sphereVAO) {
+    static bool saveKeyPressed = false;
+    static bool loadKeyPressed = false;
 
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS && !saveKeyPressed) {
         saveKeyPressed = true;
@@ -762,39 +1091,27 @@ void processInput(GLFWwindow* window, Camera& camera, int& currentSceneIndex, in
     if (glfwGetKey(window, GLFW_KEY_L) == GLFW_RELEASE) {
         loadKeyPressed = false;
     }
+}
 
-        // Переключение между Ambient, Diffuse
-    if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS && !toggleKeyJPressed) {
-        toggleKeyJPressed = true;
-        lightMode = (lightMode + 1) % 3; // 0, 1, 2
-        std::cout << "Light mode: " << (lightMode == 0 ? "Ambient" :
-                                        lightMode == 1 ? "Diffuse" : "All") << std::endl;
-    }
-    if (glfwGetKey(window, GLFW_KEY_J) == GLFW_RELEASE) {
-        toggleKeyJPressed = false;
-    }
-
-    // Включение всех режимов сразу
-    if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS && !toggleKeyKPressed) {
-        toggleKeyKPressed = true;
-        lightMode = 2; // All modes
-        std::cout << "Light mode: All" << std::endl;
-    }
-    if (glfwGetKey(window, GLFW_KEY_K) == GLFW_RELEASE) {
-        toggleKeyKPressed = false;
-    }
+// Переключение между сценами
+void handleSceneSwitch(GLFWwindow* window, int& currentSceneIndex, int sceneCount) {
+    static int lastSceneIndex = currentSceneIndex;
 
     if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS)
         currentSceneIndex = 0;
     if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS)
         currentSceneIndex = 1;
+
     if (currentSceneIndex != lastSceneIndex) {
         std::cout << "Switched to scene " << currentSceneIndex + 1 << std::endl;
         lastSceneIndex = currentSceneIndex;
     }
+}
 
-    // Отсчет и активация fightMode на клавишу 8
+// Активация и деактивация режима боя
+void handleFightMode(GLFWwindow* window, Scene& currentScene, unsigned int cubeVAO, unsigned int sphereVAO) {
     static bool toggleKeyPressed = false;
+
     if (glfwGetKey(window, GLFW_KEY_8) == GLFW_PRESS) {
         if (!toggleKeyPressed) {
             toggleKeyPressed = true;
@@ -809,75 +1126,24 @@ void processInput(GLFWwindow* window, Camera& camera, int& currentSceneIndex, in
         toggleKeyPressed = false;
     }
     fightMode(currentScene, cubeVAO, sphereVAO);
+}
 
-    static bool addCubePressed = false;
-    static bool addPyramidPressed = false;
-    static bool addSpherePressed = false;
-
-    float radius = 5.0f;
-    float fixedHeight = 0.0f; // Высота, на которой размещаются объекты
-
-    if (glfwGetKey(window, GLFW_KEY_5) == GLFW_PRESS) {
-        if (!addCubePressed) {
-            addCubePressed = true;
-            glm::vec3 randomPosition = glm::vec3(
-                randomFloat(-radius, radius),
-                fixedHeight,
-                randomFloat(-radius, radius)
-            );
-            currentScene.addObject({cubeVAO, randomPosition, 36, false, FOOD});
-            std::cout << "Added cube at position: (" 
-                      << randomPosition.x << ", " 
-                      << randomPosition.y << ", " 
-                      << randomPosition.z << ")" << std::endl;
-        }
-    } else {
-        addCubePressed = false;
-    }
-
-    if (glfwGetKey(window, GLFW_KEY_6) == GLFW_PRESS) {
-        if (!addPyramidPressed) {
-            addPyramidPressed = true;
-            glm::vec3 randomPosition = glm::vec3(
-                randomFloat(-radius, radius),
-                fixedHeight,
-                randomFloat(-radius, radius)
-            );
-            currentScene.addObject({pyramidVAO, randomPosition, 18, false, AMBIENT});
-            std::cout << "Added pyramid at position: (" 
-                      << randomPosition.x << ", " 
-                      << randomPosition.y << ", " 
-                      << randomPosition.z << ")" << std::endl;
-        }
-    } else {
-        addPyramidPressed = false;
-    }
-
-    if (glfwGetKey(window, GLFW_KEY_7) == GLFW_PRESS) {
-        if (!addSpherePressed) {
-            addSpherePressed = true;
-            glm::vec3 randomPosition = glm::vec3(
-                randomFloat(-radius, radius),
-                fixedHeight,
-                randomFloat(-radius, radius)
-            );
-            currentScene.addObject({sphereVAO, randomPosition, 2400, true, ENEMY});
-            std::cout << "Added sphere at position: (" 
-                      << randomPosition.x << ", " 
-                      << randomPosition.y << ", " 
-                      << randomPosition.z << ")" << std::endl;
-        }
-    } else {
-        addSpherePressed = false;
-    }
-        // Очистка объектов на клавишу 9
-    if (glfwGetKey(window, GLFW_KEY_9) == GLFW_PRESS) {
-        currentScene.clearObjects();
-    }
+// разбитая на модули
+void processInput(GLFWwindow* window, Camera& camera, int& currentSceneIndex, int sceneCount, Scene& currentScene, unsigned int cubeVAO, unsigned int pyramidVAO, unsigned int sphereVAO, float deltaTime) {
+    handleExitInput(window);
+    handleCameraInput(window, camera, deltaTime);
+    handleCameraMovement(window, camera);
+    handleModeSwitch(window);
+    handleShadingMode(window);
+    handleLightingInput(window);
+    handleObjectCreation(window, currentScene, cubeVAO, pyramidVAO, sphereVAO);
+    handleSceneSaveLoad(window, currentScene, cubeVAO, pyramidVAO, sphereVAO);
+    handleSceneSwitch(window, currentSceneIndex, sceneCount);
+    handleFightMode(window, currentScene, cubeVAO, sphereVAO);
 }
 
 
-
+Camera* globalCamera = nullptr; // Указатель на камеру
 
 int main() {
     // Инициализация GLFW
@@ -929,9 +1195,7 @@ rayTracingShader = glCreateProgram();
 //
 //
     // // Создание объектов
-    // unsigned int cubeVAO = createCube();
-    // unsigned int pyramidVAO = createPyramid();
-    // unsigned int sphereVAO = createSphere(0.5f, 20, 20);
+
     unsigned int cubeVAO = createCube();
     unsigned int pyramidVAO = createPyramid();
     unsigned int sphereVAO = createSphere(0.5f, 20, 20);
@@ -951,26 +1215,37 @@ rayTracingShader = glCreateProgram();
     int currentSceneIndex = 0;
     std::vector<Scene> scenes = {scene1, scene2};
 
-
+    
     // Инициализация камеры
-    Camera camera(5.0f, glm::radians(90.0f), 1.0f); // Убедитесь, что радиус и высота разумны
+    Camera camera(glm::vec3(0.0f, 1.0f, 5.0f), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f);
+    globalCamera = &camera;
+    float deltaTime = 0.016f; // Пример значения    
+    
+    glfwSetCursorPosCallback(window, [](GLFWwindow* window, double xpos, double ypos) {
+        if (globalCamera) {
+            mouseCallback(window, xpos, ypos, *globalCamera);
+        }
+    });
     
     // debug camera
-    
     std::cout << "Camera Position: " << glm::to_string(camera.getPosition()) << std::endl;
     for (const auto& obj : scenes[currentSceneIndex].objects) {
-    std::cout << "Object Position: " << glm::to_string(obj.position) << std::endl;
-}
+        std::cout << "Object Position: " << glm::to_string(obj.position) << std::endl;
+    }
 
 
 
 
     // Основной цикл
     while (!glfwWindowShouldClose(window)) {
-        processInput(window, camera, currentSceneIndex, scenes.size(), scenes[currentSceneIndex], cubeVAO, pyramidVAO, sphereVAO);
+        processInput(window, camera, currentSceneIndex, scenes.size(), scenes[currentSceneIndex], cubeVAO, pyramidVAO, sphereVAO, deltaTime);
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glEnable(GL_DEPTH_TEST);
+
+        glm::mat4 view = camera.getViewMatrix();
+        glm::mat4 projection = setupProjection(camera); // Установка проекции через glm
+
 
         glUseProgram(shaderProgram);
         glUniform1i(glGetUniformLocation(shaderProgram, "shadingMode"), shadingMode);
@@ -1015,8 +1290,8 @@ rayTracingShader = glCreateProgram();
 
         // Установка матриц
         glm::mat4 model = glm::mat4(1.0f);
-        glm::mat4 view = glm::lookAt(camera.getPosition(), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+        view = glm::lookAt(camera.getPosition(), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        projection = glm::perspective(glm::radians(45.0f), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
 
         int modelLoc = glGetUniformLocation(shaderProgram, "model");
         int viewLoc = glGetUniformLocation(shaderProgram, "view");
