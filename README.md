@@ -41,7 +41,7 @@ cd build
 rm -rf *
 cmake ..
 cmake --build .
-./lab6
+./lab4
 cd ..
 
 ```
