@@ -14,11 +14,12 @@
 #include <cmath>
 
 // Размеры окна
-const unsigned int SCR_WIDTH = 800;
-const unsigned int SCR_HEIGHT = 600;
+const unsigned int SCR_WIDTH = 1024;
+const unsigned int SCR_HEIGHT = 768;
 const int MAX_OBJECTS = 100; // Максимальное количество объектов
 bool fightModeActive = false; // Глобальная переменная
 const float COLLISION_RADIUS_SQ = 1.0f; // Квадрат радиуса коллизи
+int lightMode = 0; // 0 = Ambient, 1 = Diffuse, 2 = All
 
 float randomFloat(float min, float max) {
     static std::random_device rd;
@@ -68,31 +69,49 @@ out vec4 FragColor;
 in vec3 FragPos;
 in vec3 Normal;
 
-uniform vec3 lightPos; // Позиция точечного источника света
-uniform vec3 lightDir; // Направление направленного источника света
-uniform vec3 viewPos;  // Позиция камеры
+uniform vec3 lightPos;    // Позиция точечного источника света
+uniform vec3 lightDir;    // Направление направленного источника света
+uniform vec3 viewPos;     // Позиция камеры
 uniform vec3 lightColor;
 uniform vec3 objectColor;
+uniform int lightMode;    // Режим освещения: 0 = Ambient, 1 = Diffuse, 2 = All
 
 void main()
 {
-    // Ambient
+    vec3 result = vec3(0.0);
+    vec3 norm = normalize(Normal);
+
+    // Ambient lighting
     float ambientStrength = 0.1;
     vec3 ambient = ambientStrength * lightColor;
 
-    // Diffuse для точечного источника света
-    vec3 norm = normalize(Normal);
+    // Diffuse lighting (Point light)
     vec3 lightDirNormalized = normalize(lightPos - FragPos);
     float diffPoint = max(dot(norm, lightDirNormalized), 0.0);
     vec3 diffusePoint = diffPoint * lightColor;
 
-    // Diffuse для направленного источника света
+    // Diffuse lighting (Directional light)
     float diffDir = max(dot(norm, lightDir), 0.0);
     vec3 diffuseDir = diffDir * lightColor;
 
-    // Combine results
-    vec3 result = (ambient + diffusePoint + diffuseDir) * objectColor;
-    FragColor = vec4(result, 1.0);
+    // Specular lighting (optional extension)
+    vec3 viewDir = normalize(viewPos - FragPos);
+    vec3 reflectDir = reflect(-lightDirNormalized, norm);
+    float specularStrength = 0.5;
+    float shininess = 32.0;
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), shininess);
+    vec3 specular = specularStrength * spec * lightColor;
+
+    // Combine lighting based on lightMode
+    if (lightMode == 0) {
+        result = ambient; // Ambient only
+    } else if (lightMode == 1) {
+        result = ambient + diffusePoint + diffuseDir; // Ambient + Diffuse
+    } else if (lightMode == 2) {
+        result = ambient + diffusePoint + diffuseDir + specular; // All modes
+    }
+
+    FragColor = vec4(result * objectColor, 1.0);
 }
 )";
 
@@ -535,6 +554,8 @@ void processInput(GLFWwindow* window, Camera& camera, int& currentSceneIndex, in
     static int lastSceneIndex = currentSceneIndex;
     static bool saveKeyPressed = false;
     static bool loadKeyPressed = false;
+    static bool toggleKeyJPressed = false;
+    static bool toggleKeyKPressed = false;
 
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS && !saveKeyPressed) {
         saveKeyPressed = true;
@@ -550,6 +571,27 @@ void processInput(GLFWwindow* window, Camera& camera, int& currentSceneIndex, in
     }
     if (glfwGetKey(window, GLFW_KEY_L) == GLFW_RELEASE) {
         loadKeyPressed = false;
+    }
+
+        // Переключение между Ambient, Diffuse
+    if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS && !toggleKeyJPressed) {
+        toggleKeyJPressed = true;
+        lightMode = (lightMode + 1) % 3; // 0, 1, 2
+        std::cout << "Light mode: " << (lightMode == 0 ? "Ambient" :
+                                        lightMode == 1 ? "Diffuse" : "All") << std::endl;
+    }
+    if (glfwGetKey(window, GLFW_KEY_J) == GLFW_RELEASE) {
+        toggleKeyJPressed = false;
+    }
+
+    // Включение всех режимов сразу
+    if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS && !toggleKeyKPressed) {
+        toggleKeyKPressed = true;
+        lightMode = 2; // All modes
+        std::cout << "Light mode: All" << std::endl;
+    }
+    if (glfwGetKey(window, GLFW_KEY_K) == GLFW_RELEASE) {
+        toggleKeyKPressed = false;
     }
 
     if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS)
@@ -733,6 +775,7 @@ int main() {
         glUniform3f(glGetUniformLocation(shaderProgram, "lightPos"), 0.0f, 5.0f, 5.0f);
         glUniform3f(glGetUniformLocation(shaderProgram, "lightColor"), 1.0f, 1.0f, 1.0f);
         glUniform3f(glGetUniformLocation(shaderProgram, "objectColor"), 0.8f, 0.2f, 0.2f);
+        glUniform1i(glGetUniformLocation(shaderProgram, "lightMode"), lightMode);
 
         scenes[currentSceneIndex].render(shaderProgram, camera.getPosition());
 
